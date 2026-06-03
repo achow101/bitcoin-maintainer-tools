@@ -234,7 +234,7 @@ def make_acks_message(head_commit, acks) -> str:
         ack_str ='\n\nTop commit has no ACKs.\n'
     return ack_str
 
-def print_merge_details(pull_reference, title, branch, base_branch, head_branch, acks, message):
+def print_merge_details(pull_reference, title, branch, base_branch, head_branch, acks, message, warning_wait=False):
     print('{}{}{} {} {}into {}{}'.format(ATTR_RESET+ATTR_PR,pull_reference,ATTR_RESET,title,ATTR_RESET+ATTR_PR,branch,ATTR_RESET))
     subprocess.check_call([GIT,'--no-pager','log','--graph','--topo-order','--pretty=tformat:'+COMMIT_FORMAT,base_branch+'..'+head_branch])
     if acks is not None:
@@ -258,6 +258,14 @@ def print_merge_details(pull_reference, title, branch, base_branch, head_branch,
         print('-' * 75)
         print(message)
         print('-' * 75)
+        if warning_wait:
+            while True:
+                reply = ask_prompt(f"{ATTR_WARN}Merge commit message has warnings, type 'c' to continue, or 'x' to reject and exit.{ATTR_RESET}").lower()
+                if reply == 'c':
+                    break
+                elif reply == 'x':
+                    print("Not merging, exiting.",file=stderr)
+                    sys.exit(1)
 
 def parse_arguments():
     epilog = '''
@@ -406,7 +414,23 @@ def main():
             print("ERROR: Unable to compute tree hash")
             sys.exit(4)
 
-        print_merge_details(pull_reference, title, branch, base_branch, head_branch, acks=None, message=None)
+        # Retrieve PR comments and ACKs and add to commit message, store ACKs to print them with commit
+        # description
+        comments = retrieve_pr_comments(repo_from,pull,ghtoken) + retrieve_pr_reviews(repo_from,pull,ghtoken)
+        if comments is None:
+            print("ERROR: Could not fetch PR comments and reviews",file=stderr)
+            sys.exit(1)
+        acks = get_acks_from_comments(head_commit=head_commit, comments=comments)
+        message += make_acks_message(head_commit=head_commit, acks=acks)
+        # end message with SHA512 tree hash, then update message
+        message += '\n\nTree-SHA512: ' + first_sha512
+        try:
+            subprocess.check_call([GIT,'commit','--amend','--no-gpg-sign','-m',message.encode('utf-8')])
+        except subprocess.CalledProcessError:
+            print("ERROR: Cannot update message.", file=stderr)
+            sys.exit(4)
+
+        print_merge_details(pull_reference, title, branch, base_branch, head_branch, acks, message, warning_wait=True)
         print()
 
         # Run test command if configured.
@@ -438,22 +462,6 @@ def main():
         if first_sha512 != second_sha512:
             print("ERROR: Tree hash changed unexpectedly",file=stderr)
             sys.exit(8)
-
-        # Retrieve PR comments and ACKs and add to commit message, store ACKs to print them with commit
-        # description
-        comments = retrieve_pr_comments(repo_from,pull,ghtoken) + retrieve_pr_reviews(repo_from,pull,ghtoken)
-        if comments is None:
-            print("ERROR: Could not fetch PR comments and reviews",file=stderr)
-            sys.exit(1)
-        acks = get_acks_from_comments(head_commit=head_commit, comments=comments)
-        message += make_acks_message(head_commit=head_commit, acks=acks)
-        # end message with SHA512 tree hash, then update message
-        message += '\n\nTree-SHA512: ' + first_sha512
-        try:
-            subprocess.check_call([GIT,'commit','--amend','--no-gpg-sign','-m',message.encode('utf-8')])
-        except subprocess.CalledProcessError:
-            print("ERROR: Cannot update message.", file=stderr)
-            sys.exit(4)
 
         # Sign the merge commit.
         print_merge_details(pull_reference, title, branch, base_branch, head_branch, acks, message)
