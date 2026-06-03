@@ -416,15 +416,7 @@ def main():
                 sys.exit(5)
 
             # Show the created merge.
-            diff = subprocess.check_output([GIT,'diff',merge_branch+'..'+local_merge_branch])
             subprocess.check_call([GIT,'diff',base_branch+'..'+local_merge_branch])
-            if diff:
-                print("WARNING: merge differs from github!",file=stderr)
-                reply = ask_prompt("Type 'ignore' to continue.")
-                if reply.lower() == 'ignore':
-                    print("Difference with github ignored.",file=stderr)
-                else:
-                    sys.exit(6)
         else:
             # Verify the result manually.
             print("Dropping you on a shell so you can try building/testing the merged source.",file=stderr)
